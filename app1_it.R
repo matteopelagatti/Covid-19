@@ -1,11 +1,6 @@
-#
-# This is a Shiny web application. You can run the application by clicking
-# the 'Run App' button above.
-#
-# Find out more about building applications with Shiny here:
-#
-#    http://shiny.rstudio.com/
-#
+###############
+# Covid-19 IT #
+###############
 
 library(curl)
 library(shiny)
@@ -15,9 +10,7 @@ library(KFAS)
 library(shinythemes)
 
 dt <- jsonlite::fromJSON(txt = "https://raw.githubusercontent.com/pcm-dpc/COVID-19/master/dati-json/dpc-covid19-ita-regioni.json")
-# dt$data <- as.Date(strtrim(dt$data, 10))
 regioni <- unique(dt$denominazione_regione)
-# dati_data <- Sys.time()
 
 # Define UI for application that draws a histogram
 ui <- fluidPage(theme = shinytheme("flatly"),
@@ -28,8 +21,6 @@ ui <- fluidPage(theme = shinytheme("flatly"),
    # Sidebar with a slider input for number of bins 
    sidebarLayout(
       sidebarPanel(
-         actionButton("carica_dati", label = "Ricarica i dati"),
-         textOutput("ora"),
          selectInput("regione",
                      label    = "Seleziona regione",
                      choices  = c("Italia", regioni),
@@ -50,17 +41,19 @@ ui <- fluidPage(theme = shinytheme("flatly"),
                      round = TRUE),
          h3("Previsioni"),
          helpText("Queste previsioni proiettano nel futuro
-                  l'ultima stima del tasso di crescita. Esistono modelli
-                  epidemici (come il SIR) per prevedere l'andamento delle
-                  epidemie. Tuttavia, dato che i dati sono molto parziali
-                  e incerti e dato che i comportamenti degli Italiani e
+                  l'ultima stima del tasso di crescita. Esistono,",
+                  a("modelli epidemici",
+                    href = "https://it.wikipedia.org/wiki/Modelli_matematici_in_epidemiologia"),
+                  "per prevedere l'andamento delle
+                  epidemie. Tuttavia, dato che i dati sono parziali
+                  e incerti, e dato che i comportamenti degli Italiani e
                   delle istituzioni sanitarie sono cambiati diverse
                   volte per via di innovazioni nei decreti, regolamenti e
-                  politiche sanitarie, qui ci limitiamo ad estrarre regolarità
+                  politiche sanitarie, qui ci limitiamo ad estrarre regolaritÃ 
                   dai dati senza un vero e proprio modello di sviluppo
                   dell'epidemia. Queste proiezioni sono corredate di
-                  intervalli di confidenza, utilissimi a evidenziare
-                  l'enorme incertezza che la previsione porta con se."),
+                  intervalli di confidenza, che evidenziano
+                  l'enorme incertezza delle previsioni a lungo termine."),
          sliderInput("orizzonte",
                      label = "Orizzonte previsivo in giorni",
                      min = 0,
@@ -70,11 +63,16 @@ ui <- fluidPage(theme = shinytheme("flatly"),
          h4("Data di azzeramento"),
          textOutput("data_zero"),
          helpText("Elaborazioni di Matteo Pelagatti sui dati della
-                   da Protezione Civile pubblicati su
-                   https://github.com/pcm-dpc/COVID-19")
+                   da Protezione Civile pubblicati su",
+                   a("https://github.com/pcm-dpc/COVID-19",
+                     href = "https://github.com/pcm-dpc/COVID-19"),
+                  ". Si consulti",
+                  a("https://matteopelagatti.github.io/Covid-19/rapporto_italia_short",
+                    href = "https://matteopelagatti.github.io/Covid-19/rapporto_italia_short"),
+                  "per maggiori dettagli sul modello usato.")
       ),
       
-      # Show a plot of the generated distribution
+      # Show the plots of series, level and rate
       mainPanel(
          dygraphOutput("line_plot"),
          dygraphOutput("slope_plot")
@@ -99,7 +97,7 @@ server <- function(input, output) {
         summarise_all(sum) %>% as.data.frame()
     } else {
       dt <- dataInput() %>%
-        filter(denominazione_regione == input$regione)
+        dplyr::filter(denominazione_regione == input$regione)
     }
     if (input$serie == "Nuovi positivi") {
       dt <- dt[, c("data", "nuovi_positivi")]
@@ -117,9 +115,12 @@ server <- function(input, output) {
     dt <- dataSelect()
     ly <- log(dt[, 2] + 0.1)
     if (input$orizzonte) ly <- c(ly, rep(NA, input$orizzonte))
-    mod <- SSModel(ly ~ SSMtrend(2, Q = list(0, NA)),
+    mod <- SSModel(ly ~ SSMtrend(2, Q = list(0, NA)) +
+                     SSMseasonal(7, NA),
                    H = NA)
-    fit <- fitSSM(mod, c(0.1, 2*log(sd(ly, na.rm = TRUE)/2)))
+    vly <- var(diff(ly, 7), na.rm = TRUE)
+    init <- log(c(vly / 10, vly / 10, vly / 2))
+    fit <- fitSSM(mod, init)
     smo <- KFS(fit$model, smoothing = c("state", "signal"))
     smo$date <- dt$data
     if (input$orizzonte) {
@@ -177,11 +178,16 @@ server <- function(input, output) {
     ultimo_tasso <- exp(smo$alphahat[nrow(smo$alphahat), "slope"])
     if (ultimo_tasso >= 1) {
       out <- paste0("Se il tasso rimane l'ultimo stimato (", round(ultimo_tasso, 2),
-                   ") la data di azzeramento è indeterminata")
+                   ") la data di azzeramento Ã¨ indeterminata")
+    } else if (ultimo_livel < 1) {
+      out <- paste("L'azzeramento Ã¨ avvenuto in data",
+                   smo$date[-(1:35)][
+                     which(smo$alphahat[-(1:35), "level"] < 0)[1]
+                     ])
     } else {
       h <- round(-log(ultimo_livel) / log(ultimo_tasso), 0)
       out <- paste0("Se il tasso rimane l'ultimo stimato (", round(ultimo_tasso, 2),
-                   ") la data di azzeramento è ", as.character(ultima_data + h))
+                   ") la data di azzeramento Ã¨ ", as.character(ultima_data + h))
     }
     out
   })
